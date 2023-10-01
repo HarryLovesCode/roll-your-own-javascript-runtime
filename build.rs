@@ -3,10 +3,7 @@ use std::env;
 use std::path::PathBuf;
 
 fn main() {
-    extension!(
-        runjs,
-        js = ["src/runtime.js",]
-    );
+    extension!(runjs, js = ["src/runtime.js",]);
 
     let out_dir = PathBuf::from(env::var_os("OUT_DIR").unwrap());
     let snapshot_path = out_dir.join("RUNJS_SNAPSHOT.bin");
@@ -16,9 +13,9 @@ fn main() {
             cargo_manifest_dir: env!("CARGO_MANIFEST_DIR"),
             snapshot_path,
             startup_snapshot: None,
-            extensions: vec![runjs::init_js_only()],
+            extensions: vec![runjs::init_ops_and_esm()],
             compression_cb: None,
-            snapshot_module_load_cb: None,
-        }
+            with_runtime_cb: None,
+        },
     );
 }

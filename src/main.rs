@@ -1,43 +1,60 @@
-use std::env;
 use deno_ast::MediaType;
 use deno_ast::ParseParams;
 use deno_ast::SourceTextInfo;
 use deno_core::error::AnyError;
+use deno_core::extension;
 use deno_core::futures::FutureExt;
-use deno_core::op;
+use deno_core::op2;
 use deno_core::Extension;
 use deno_core::Snapshot;
+use std::env;
 use std::rc::Rc;
 
-#[op]
-async fn op_read_file(path: String) -> Result<String, AnyError> {
+#[op2(async)]
+#[string]
+async fn op_read_file(#[string] path: String) -> Result<String, AnyError> {
     let contents = tokio::fs::read_to_string(path).await?;
     Ok(contents)
 }
 
-#[op]
-async fn op_write_file(path: String, contents: String) -> Result<(), AnyError> {
+#[op2(async)]
+#[string]
+async fn op_write_file(#[string] path: String, #[string] contents: String) -> Result<(), AnyError> {
     tokio::fs::write(path, contents).await?;
     Ok(())
 }
 
-#[op]
-async fn op_fetch(url: String) -> Result<String, AnyError> {
+#[op2(async)]
+#[string]
+async fn op_fetch(#[string] url: String) -> Result<String, AnyError> {
     let body = reqwest::get(url).await?.text().await?;
     Ok(body)
 }
 
-#[op]
-async fn op_set_timeout(delay: u64) -> Result<(), AnyError> {
-    tokio::time::sleep(std::time::Duration::from_millis(delay)).await;
+#[op2(async)]
+#[string]
+async fn op_set_timeout(delay: u32) -> Result<(), AnyError> {
+    tokio::time::sleep(std::time::Duration::from_millis(delay.into())).await;
     Ok(())
 }
 
-#[op]
-fn op_remove_file(path: String) -> Result<(), AnyError> {
+#[op2(fast)]
+#[string]
+fn op_remove_file(#[string] path: String) -> Result<(), AnyError> {
     std::fs::remove_file(path)?;
     Ok(())
 }
+
+extension!(
+    core,
+    ops = [
+        op_read_file,
+        op_write_file,
+        op_remove_file,
+        op_fetch,
+        op_set_timeout,
+    ]
+);
 
 struct TsModuleLoader;
 
@@ -92,10 +109,11 @@ impl deno_core::ModuleLoader for TsModuleLoader {
             } else {
                 code
             };
+
             let module = deno_core::ModuleSource::new(
                 module_type,
                 deno_core::ModuleCode::from(code),
-                &module_specifier
+                &module_specifier,
             );
             Ok(module)
         }
@@ -107,24 +125,16 @@ static RUNTIME_SNAPSHOT: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/RUNJS
 
 async fn run_js(file_path: &str) -> Result<(), AnyError> {
     let main_module = deno_core::resolve_path(file_path, env::current_dir()?.as_path())?;
-    let runjs_extension = Extension::builder("runjs")
-        .ops(vec![
-            op_read_file::decl(),
-            op_write_file::decl(),
-            op_remove_file::decl(),
-            op_fetch::decl(),
-            op_set_timeout::decl(),
-        ])
-        .build();
     let mut js_runtime = deno_core::JsRuntime::new(deno_core::RuntimeOptions {
         module_loader: Some(Rc::new(TsModuleLoader)),
         startup_snapshot: Some(Snapshot::Static(RUNTIME_SNAPSHOT)),
-        extensions: vec![runjs_extension],
+        extensions: vec![Extension::default(), core::init_ops_and_esm()],
         ..Default::default()
     });
 
     let mod_id = js_runtime.load_main_module(&main_module, None).await?;
     let result = js_runtime.mod_evaluate(mod_id);
+    
     js_runtime.run_event_loop(false).await?;
     result.await?
 }
